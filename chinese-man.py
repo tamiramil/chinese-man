@@ -14,6 +14,7 @@ import requests
 from bs4 import BeautifulSoup, NavigableString
 from google import genai
 from selenium import webdriver
+from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.firefox.service import Service as FirefoxService
 from selenium.webdriver.safari.service import Service as SafariService
@@ -72,7 +73,7 @@ os.environ['GEMINI_API_KEY'] = config['credentials']['api_key']
 
 # === Core Engine Services ===
 
-def get_automation_dirver():
+def get_automation_driver():
     browser_type = config['system'].get('browser', 'firefox').lower()
     is_headless = config['system'].get('headless_mode', True)
     
@@ -177,7 +178,7 @@ def synthesize_solutions(client, task_id, specs):
     log(LogColor.AI, f"Requesting synthesis for unit {task_id}...")
 
     base_tries = random.randint(config['ai_logic']['min_attempts'], config['ai_logic']['max_attempts'])
-    rank_factor = config['ai_logic']['rank_dactor']
+    rank_factor = config['ai_logic']['rank_factor']
 
     prompt = (
         "Act as a student learning Java. You must think step-by-step but output only the result.\n\n"
@@ -194,32 +195,32 @@ def synthesize_solutions(client, task_id, specs):
 
         "IMPORTANT RULES (STRICT COMPLIANCE):\n"
         "- Start your response directly with the complexity number. NO preamble, NO 'Sure', NO 'Here is the code'.\n"
-        "- Use 'EOS' as a plain text separator between solutions.\n"
+        "- Use 'SMD' as a plain text separator between solutions.\n"
         "- Do not use markdown backticks (```) or any conversational text.\n"
         "- Do not include any comments (e.g., // Solution 1).\n"
         "- The provided signature ends with an opening brace '{'. Do NOT repeat it. Your code must start after it and end with a closing brace '}'.\n\n"
 
         "OUTPUT FORMAT EXAMPLE:\n"
         "<complexity_number>\n"
-        "EOS\n"
+        "SMD\n"
         "<signature_text>\n"
         "    // code body\n"
         "}\n"
-        "EOS\n"
+        "SMD\n"
         "<signature_text>\n"
         "    // next version\n"
         "}\n\n"
 
         "INPUT DATA:\n"
-        f"Problem:\n{task_data.get('description')}\n\n"
-        f"Examples:\n{task_data.get('examples')}\n\n"
-        f"Signature:\n{task_data.get('signature')}\n\n"
+        f"Problem:\n{specs.get('description')}\n\n"
+        f"Examples:\n{specs.get('examples')}\n\n"
+        f"Signature:\n{specs.get('signature')}\n\n"
         f"Style:\n{config['ai_logic']['code_style']}"
     )
 
     try:
         response = client.models.generate_content(model=config['ai_logic']['model_id'], contents=prompt)
-        fragments = [f.strip() for f in response.text.split('SMD') if f.strip()]
+        fragments = [f.strip() for f in response.text.replace('`', '').split('SMD') if f.strip()]
         return int(fragments[0]), fragments[1:]
     except Exception as e:
         log(LogColor.ERROR, f"Synthesis failed: {e}")
