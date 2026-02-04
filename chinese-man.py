@@ -1,3 +1,9 @@
+"""
+Author: PulpyPuppy
+Description:
+This script cracks problems from codingbat.com/java like if it were a human (I hope).
+"""
+
 import os
 import sys
 import time
@@ -170,15 +176,45 @@ def _fetch_unit_specs(session, url):
 def synthesize_solutions(client, task_id, specs):
     log(LogColor.AI, f"Requesting synthesis for unit {task_id}...")
 
-    tries = random.randint(config['ai_logic']['min_attempts'], config['ai_logic']['max_attempts'])
+    base_tries = random.randint(config['ai_logic']['min_attempts'], config['ai_logic']['max_attempts'])
+    rank_factor = config['ai_logic']['rank_dactor']
 
     prompt = (
-        f"Context: Java Educational Environment. Complexity Scale: 1-3.\n"
-        f"Task: {specs['desc']}\nExamples: {specs['cases']}\nSignature: {specs['decl']}\n"
-        f"Requirement: Generate {tries} incremental iterations. "
-        "Last iteration must be logically perfect. Previous ones must contain minor syntax or logic flaws.\n"
-        "Separator: 'SMD'. Format: <complexity> SMD <code_v1> SMD <code_v2>...\n"
-        "Rules: No markdown, no comments, close all braces."
+        "Act as a student learning Java. You must think step-by-step but output only the result.\n\n"
+
+        "PHASE 1: Analyze complexity (1 to 3):\n"
+        "1 - Easy: simple logic, 1-2 lines of code.\n"
+        "2 - Medium: loops, multiple conditions, basic logic.\n"
+        "3 - Hard: nested loops, complex data structures, algorithmic thinking.\n\n"
+
+        "PHASE 2: Generation Logic:\n"
+        f"Calculate the total number of solutions (T) using this rule: T = {base_tries} + (complexity_number * {rank_factor}).\n"
+        "Generate exactly T solutions. The first T-1 solutions MUST be incorrect (syntax or logical errors). The last (T-th) solution MUST be correct.\n"
+        "Show incremental progress: each version should be a slight improvement or a fix of a previous error, but still flawed until the final one.\n\n"
+
+        "IMPORTANT RULES (STRICT COMPLIANCE):\n"
+        "- Start your response directly with the complexity number. NO preamble, NO 'Sure', NO 'Here is the code'.\n"
+        "- Use 'EOS' as a plain text separator between solutions.\n"
+        "- Do not use markdown backticks (```) or any conversational text.\n"
+        "- Do not include any comments (e.g., // Solution 1).\n"
+        "- The provided signature ends with an opening brace '{'. Do NOT repeat it. Your code must start after it and end with a closing brace '}'.\n\n"
+
+        "OUTPUT FORMAT EXAMPLE:\n"
+        "<complexity_number>\n"
+        "EOS\n"
+        "<signature_text>\n"
+        "    // code body\n"
+        "}\n"
+        "EOS\n"
+        "<signature_text>\n"
+        "    // next version\n"
+        "}\n\n"
+
+        "INPUT DATA:\n"
+        f"Problem:\n{task_data.get('description')}\n\n"
+        f"Examples:\n{task_data.get('examples')}\n\n"
+        f"Signature:\n{task_data.get('signature')}\n\n"
+        f"Style:\n{config['ai_logic']['code_style']}"
     )
 
     try:
@@ -248,7 +284,7 @@ def simulate_human_workflow(session):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python dummy-gummy.py [sync|gen|deploy]")
+        print("Usage: python chinese-man.py [sync|gen|deploy]")
         return
 
     cmd = sys.argv[1]
