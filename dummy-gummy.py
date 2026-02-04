@@ -1,348 +1,280 @@
-from selenium import webdriver
-from selenium.webdriver.common.by import By
+import os
+import sys
+import time
+import json
+import random
+import tomllib
+import requests
 from bs4 import BeautifulSoup, NavigableString
 from google import genai
-import random
-import requests
-import tomllib
-import json
-import time
-import sys
-import os
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.firefox.service import Service as FirefoxService
+from selenium.webdriver.safari.service import Service as SafariService
+from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.firefox import GeckoDriverManager
+
+class LogColor:
+    INFO = '\033[94m[INFO]\033[0m'
+    SUCCESS = '\033[92m[SUCCESS]\033[0m'
+    WARNING = '\033[93m[WARN]\033[0m'
+    ERROR = '\033[91m[ERROR]\033[0m'
+    AI = '\033[95m[AI]\033[0m'
+
+def log(tag, message):
+    timestamp = time.strftime("%H:%M:%S")
+    print(f"{timestamp} {tag} {message}")
+
+# === Configuration Infrastructure ===
+
+def validate_config(cfg):
+    required_structure = {
+        'credentials': ['account_email', 'account_password', 'api_key'],
+        'system': ['headless_mode'],
+        'paths': ['metadata_store', 'solution_buffer'],
+        'ai_logic': ['model_id', 'min_attempts', 'max_attempts'],
+        'delays': ['login_wait', 'base_think_time']
+    }
+    
+    missing = []
+    for section, keys in required_structure.items():
+        if section not in cfg:
+            missing.append(f"Missing section: [{section}]")
+            continue
+        for key in keys:
+            if key not in cfg[section]:
+                missing.append(f"Missing key: {key} in [{section}]")
+            elif not cfg[section][key] and not isinstance(cfg[section][key], bool):
+                missing.append(f"Empty value for: {key} in [{section}]")
+                
+    if missing:
+        log(LogColor.ERROR, "Configuration validation failed:")
+        for error in missing:
+            print(f"  - {error}")
+        sys.exit(1)
+    
+    log(LogColor.SUCCESS, "Configuration validated. Ready for operation.")
 
 with open('config.toml', 'rb') as f:
     config = tomllib.load(f)
 
-base_url = 'https://codingbat.com'
-java_url = 'https://codingbat.com/java'
-login_url = 'https://codingbat.com/java'
+validate_config(config)
 
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
-}
+BASE_URL = 'https://codingbat.com'
+TARGET_LANG_URL = f"{BASE_URL}/java"
+os.environ['GEMINI_API_KEY'] = config['credentials']['api_key']
 
-os.environ['GEMINI_API_KEY'] = config['gemini_api_key']
+# === Core Engine Services ===
 
+def get_automation_dirver():
+    browser_type = config['system'].get('browser', 'firefox').lower()
+    is_headless = config['system'].get('headless_mode', True)
+    
+    log(LogColor.INFO, f"Initializing {browser_type.capitalize()} engine...")
+    
+    if browser_type == 'chrome':
+        options = webdriver.ChromeOptions()
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage') 
+        if is_headless: options.add_argument('--headless')
+        return webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
+    
+    elif browser_type == 'firefox':
+        options = webdriver.FirefoxOptions()
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage') 
+        if is_headless: options.add_argument('--headless')
+        return webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()), options=options)
 
-# === Utils ===
+    elif browser_type == 'safari':
+        options = webdriver.SafariOptions()
+        return webdriver.Safari(service=SafariService(), options=options)
+    
+    else:
+        log(LogColor.ERROR, f"Unsupported browser: {browser_type}")
+        sys.exit(1)
 
-def setup_webdriver():
-    sweetyfox_options = webdriver.FirefoxOptions()
-    sweetyfox_options.add_argument('--headless')
-    sweetyfox_options.add_argument('--no-sandbox')
-    sweetyfox_options.add_argument('--disable-dev-shm-usage')
+def authorize_session(driver):
+    log(LogColor.INFO, "Initiating authorization sequence...")
+    driver.get(TARGET_LANG_URL)
 
-    return webdriver.Firefox(options=sweetyfox_options)
+    driver.find_element(By.NAME, 'uname').send_keys(config['credentials']['account_email'])
+    driver.find_element(By.NAME, 'pw').send_keys(config['credentials']['account_password'])
+    driver.find_element(By.NAME, 'dologin').click()
 
+    time.sleep(config['delays']['login_wait'])
+    log(LogColor.SUCCESS, "Session authorized successfully.")
 
-def login(driver):
-    driver.get('https://codingbat.com/java')
-
-    username_field = driver.find_element(By.NAME, 'uname')
-    password_field = driver.find_element(By.NAME, 'pw')
-    login_button = driver.find_element(By.NAME, 'dologin')
-
-    username_field.send_keys(config['username'])
-    password_field.send_keys(config['password'])
-    login_button.click()
-
-    time.sleep(config['login_sleep'])
-
-
-def save_cookies(driver):
+def extract_session_context(driver):
     cookies = driver.get_cookies()
-    cookie_dict = {}
-    for cookie in cookies:
-        cookie_dict[cookie['name']] = cookie['value']
-    return cookie_dict
+    return {c['name']: c['value'] for c in cookies}
 
+# === Data Acquisition Layer ===
 
-# === Scrape ===
-
-# Gathers all the tasks in codingbat.com
-# with their status and saves to json
-def scrape_tasks(session):
-    response = session.get(java_url, headers=headers)
+def sync_task_repository(session):
+    log(LogColor.INFO, "Synchronizing local task repository with remote server...")
+    response = session.get(TARGET_LANG_URL)
     soup = BeautifulSoup(response.content, 'html.parser')
 
-    summs = soup.find_all('div', class_='summ')
+    task_map = {}
+    categories = soup.find_all('div', class_='summ')
 
-    tasks = {}
-    for summ in summs:
-        category_link = summ.find('a')
-        if not category_link:
-            continue
+    for cat in categories:
+        link = cat.find('a')
+        if not link: continue
 
-        category_url = base_url + category_link.get('href')
-        print(f"Scraping the category {category_url}...")
+        cat_url = BASE_URL + link.get('href')
+        log(LogColor.INFO, f"Scanning category: {link.get_text()}")
 
-        category_tasks = scrape_category(session, category_url)
-        tasks.update(category_tasks)
+        cat_response = session.get(cat_url)
+        cat_soup = BeautifulSoup(cat_response.content, 'html.parser')
 
-    with open(config['puppy_path'], 'w') as f:
-        json.dump(tasks, f, indent=4, ensure_ascii=False)
+        for td in cat_soup.find_all('td'):
+            task_link = td.find('a', href=True)
+            if task_link and '/prob/p' in task_link['href']:
+                t_id = task_link['href'].split('/')[-1]
+                details = _fetch_unit_specs(session, BASE_URL + task_link['href'])
 
+                img = td.find('img')
+                is_completed = 'c2' in (img['src'] if img else '')
 
-def scrape_category(session, url):
-    response = session.get(url, headers=headers)
-    soup = BeautifulSoup(response.content, 'html.parser')
+                task_map[t_id] = {**details, "status_completed": is_completed}
 
-    data = {}
+    with open(config['paths']['metadata_store'], 'w', encoding='utf-8') as f:
+        json.dump(task_map, f, indent=4)
+    log(LogColor.SUCCESS, f"Repository sync complete. Total units: {len(task_map)}")
 
-    for td in soup.find_all('td'):
-        link = td.find('a', href=True)
-        img = td.find('img')
+def _fetch_unit_specs(session, url):
+    resp = session.get(url)
+    soup = BeautifulSoup(resp.content, 'html.parser')
+    desc_div = soup.find('div', class_='minh')
 
-        if link and '/prob/p' in link['href']:
-            task_id = link['href'].split('/')[-1]
-            description, examples, signature = scrape_task_details(session, base_url + link['href'])
-            done = 'c2' in (img['src'] if img else '')
-
-            data[task_id] = {
-                "description": description,
-                "examples": examples,
-                "signature": signature,
-                "done": done
-            }
-
-    return data
-
-
-def scrape_task_details(session, url):
-    response = session.get(url, headers=headers)
-    soup = BeautifulSoup(response.content, 'html.parser')
-
-    description_div = soup.find('div', class_='minh')
-
-    if not description_div:
-        return '', ''
-
-    description = description_div.get_text(strip=True)
+    description = desc_div.get_text(strip=True) if desc_div else ""
     examples = []
-    signature = ''
 
-    current = description_div.next_sibling
-    while current:
-        if current.name in ['p', 'form', 'button']:
-            break
-        if isinstance(current, NavigableString):
-            text = current.strip()
-            if '→' in text:
-                examples.append(text)
-        current = current.next_sibling
+    curr = desc_div.next_sibling if desc_div else None
+    while curr:
+        if curr.name in ['p', 'form', 'button']: break
+        if isinstance(curr, NavigableString) and '→' in curr:
+            examples.append(curr.strip())
+        curr = curr.next_sibling
 
-    ace_div = soup.find('div', id='ace_div')
-    if ace_div:
-        signature = ace_div.get_text().strip().split('\n')[0]
+    signature = ""
+    ace = soup.find('div', id='ace_div')
+    if ace: signature = ace.get_text().strip().split('\n')[0]
 
-    return description, examples, signature
+    return {"desc": description, "cases": examples, "decl": signature}
 
+# === AI Orchestration Layer ===
 
-# === Generate Solutions ===
+def synthesize_solutions(client, task_id, specs):
+    log(LogColor.AI, f"Requesting synthesis for unit {task_id}...")
 
-def gensols(client, task_data):
-    base_tries = random.randint(config['lower_tries'], config['upper_tries'])
-    response = client.models.generate_content(
-        model = 'gemini-2.0-flash-lite',
-        prompt = (
-            "Act as a student learning Java. Analyze the problem complexity (1 to 3).\n"
-            "1 - Easy (simple logic, 1-2 lines of code)\n"
-            "2 - Medium (loops, multiple conditions, basic logic)\n"
-            "3 - Hard (nested loops, complex data structures, algorithmic thinking)\n\n"
+    tries = random.randint(config['ai_logic']['min_attempts'], config['ai_logic']['max_attempts'])
 
-            "You will get:\n"
-            "1. The Java problem description;\n"
-            "2. The examples of input and expected output;\n"
-            "3. The signature of the function.\n\n"
-
-            f"Generate {base_tries}+<complexity_number>*{config['complexity_factor']} solutions where <tries_number>-1 solutions are incorrect and the last one is correct. "
-            "Incorrect answers must have logical or syntax errors. "
-            "Each version must be a slight improvement over the previous one, showing incremental progress.\n\n"
-
-            "IMPORTANT RULES:\n"
-            "- Output ONLY the complexity number and code.\n"
-            "- Use 'EOS' as a plain text separator between solutions.\n"
-            "- Do not use markdown backticks (```) or any conversational text.\n"
-            "- Do not include any comments (like // Solution 1).\n"
-            "- The provided signature already includes an opening brace '{'. Make sure your code completes the function correctly with a closing brace '}'.\n\n"
-
-            "The format of the output must be exactly like this:\n"
-            "<complexity_number>\n"
-            "EOS\n"
-            "<signature>\n"
-            "   // your code here\n"
-            "}\n"
-            "EOS\n"
-            "<signature>\n"
-            "   // next version code\n"
-            "}\n\n"
-
-            f"The problem description:\n{task_data.get('description')}\n\n"
-            f"The examples:\n{task_data.get('examples')}\n\n"
-            f"The signature:\n{task_data.get('signature')}\n\n"
-            f"The code style description:\n{config['code_style']}"
-        )
+    prompt = (
+        f"Context: Java Educational Environment. Complexity Scale: 1-3.\n"
+        f"Task: {specs['desc']}\nExamples: {specs['cases']}\nSignature: {specs['decl']}\n"
+        f"Requirement: Generate {tries} incremental iterations. "
+        "Last iteration must be logically perfect. Previous ones must contain minor syntax or logic flaws.\n"
+        "Separator: 'SMD'. Format: <complexity> SMD <code_v1> SMD <code_v2>...\n"
+        "Rules: No markdown, no comments, close all braces."
     )
-    parts = [p.strip() for p in response.text.split('EOS') if p.strip()]
+
     try:
-        complexity = int(parts[0])
-    except ValueError:
-        complexity = 1
-    solutions = parts[1:]
-
-    return complexity, solutions
-
-
-def lick_it(client):
-    with open(config['puppy_path'], 'r', encoding='utf-8') as f:
-        puppy = json.load(f)
-
-    pussy = {}
-    if os.path.exists(config['pussy_path']):
-        with open(config['pussy_path'], 'r', encoding='utf-8') as f:
-            pussy = json.load(f)
-
-    for task_id, task_data in puppy.items():
-        if task_data.get('done') or task_id in pussy:
-            print(f"Skipping task {task_id}")
-            continue
-        print(f"Generating solutions for {task_id}")
-        complexity, solutions = gensols(client, task_data)
-        pussy[task_id] = {
-            "complexity": complexity,
-            "solutions": solutions
-        }
-
-        with open(config['pussy_path'], 'w', encoding='utf-8') as f:
-            json.dump(pussy, f, indent=4, ensure_ascii=False)
-
-
-# === Suck ma dick ===
-
-def mark_as_done(task_id):
-    try:
-        with open(config['puppy_path'], 'r', encoding='utf-8') as f:
-            puppy = json.load(f)
-
-        if task_id in puppy:
-            puppy[task_id]['done'] = True
-        else:
-            return
-
-        with open(config['puppy_path'], 'w', encoding='utf-8') as f:
-            json.dump(puppy, f, indent=4, ensure_ascii=False)
-
+        response = client.models.generate_content(model=config['ai_logic']['model_id'], contents=prompt)
+        fragments = [f.strip() for f in response.text.split('SMD') if f.strip()]
+        return int(fragments[0]), fragments[1:]
     except Exception as e:
-        print(f"Failed to mark as done: {e}")
+        log(LogColor.ERROR, f"Synthesis failed: {e}")
+        return 1, []
 
+def batch_process_solutions():
+    client = genai.Client()
+    with open(config['paths']['metadata_store'], 'r') as f:
+        meta = json.load(f)
 
-def submit_solution(session, task_id, code):
+    buffer = {}
+    if os.path.exists(config['paths']['solution_buffer']):
+        with open(config['paths']['solution_buffer'], 'r') as f:
+            buffer = json.load(f)
+
+    for tid, specs in meta.items():
+        if specs['status_completed'] or tid in buffer: continue
+
+        complexity, items = synthesize_solutions(client, tid, specs)
+        buffer[tid] = {"rank": complexity, "data": items}
+
+        with open(config['paths']['solution_buffer'], 'w') as f:
+            json.dump(buffer, f, indent=4)
+        time.sleep(1) # Rate limiting
+
+# === Execution Layer ===
+
+def deploy_solution(session, tid, code):
     payload = {
-        "id": task_id,
-        "code": code,
-        "cuname": config['username'],
-        "owner": "",
-        "adate": time.strftime("%Y%m%d-%H%M%Sz", time.gmtime()),
-        "font": "100"
+        "id": tid, "code": code, "cuname": config['credentials']['account_email'],
+        "owner": "", "adate": time.strftime("%Y%m%d-%H%M%Sz", time.gmtime()), "font": "100"
     }
-
     headers = {
         "Content-Type": "application/x-www-form-urlencoded",
-        "Referer": f"[https://codingbat.com/prob/](https://codingbat.com/prob/){task_id}"
+        "Referer": f"https://codingbat.com/prob/{tid}"
     }
+    return session.post(f"{BASE_URL}/run", data=payload, headers=headers)
 
-    response = session.post("[https://codingbat.com/run](https://codingbat.com/run)", data=payload, headers=headers)
-    return response.text
+def simulate_human_workflow(session):
+    with open(config['paths']['metadata_store'], 'r') as f:
+        meta = json.load(f)
+    with open(config['paths']['solution_buffer'], 'r') as f:
+        buffer = json.load(f)
 
+    for tid, payload in buffer.items():
+        if meta[tid].get('status_completed'): continue
 
-def how_much_is_the_fish(complexity, attempt_number):
-    base_time = config['base_time'] * complexity
-    progress_factor = 1 + (attempt_number * 0.2)
-    jitter = random.uniform(0.8, 1.2)
+        log(LogColor.INFO, f"Executing deployment pipeline for unit {tid}")
+        for idx, code in enumerate(payload['data']):
+            wait = config['delays']['base_think_time'] \
+                    * payload['rank'] \
+                    * (1 + idx * 0.3) \
+                    * random.uniform(0.8, 1.2)
+            log(LogColor.INFO, f"Simulating cognitive delay: {wait:.1f}s")
+            time.sleep(wait)
 
-    wait_time = base_time * progress_factor * jitter
+            deploy_solution(session, tid, code)
 
-    print(f"Thinking for {wait_time:.1f} seconds (Attempt {attempt_number + 1})...")
-    time.sleep(wait_time)
+        log(LogColor.SUCCESS, f"Unit {tid} verified and closed.")
 
-
-def crack_the_nut(session, task_id, solution_data):
-    complexity = solution_data['complexity']
-    solutions = solution_data['solutions']
-    for i, code in enumerate(solutions):
-        how_much_is_the_fish(complexity, i)
-        submit_solution(session, task_id, code)
-
-
-def crack_all_nuts(session):
-    with open(config['puppy_path'], 'r', encoding='utf-8') as f:
-        puppy = json.load(f)
-
-    with open(config['pussy_path'], 'r', encoding='utf-8') as f:
-        pussy = json.load(f)
-
-    for task_id, solution_data in pussy.items():
-        if puppy[task_id].get('done'):
-            print(f"Skipping task {task_id}")
-            continue
-        print(f"Cracking the task {task_id}...")
-        crack_the_nut(session, task_id, solution_data)
-        mark_as_done(task_id)
-
-
-# === Come over here! ===
+# === entry_point ===
 
 def main():
-    args = sys.argv
-    if len(args) == 1:
-        print(f"No commands specified. Options: puppy|pussy|omnomnom.")
-    elif len(args) > 2:
-        print(f"Too many arguments.")
-    elif args[1] == 'puppy':
-        try:
-            driver = setup_webdriver()
-            login(driver)
-            cookies = save_cookies(driver)
+    if len(sys.argv) < 2:
+        print("Usage: python dummy-gummy.py [sync|gen|deploy]")
+        return
 
-            session = requests.Session()
-            session.cookies.update(cookies)
+    cmd = sys.argv[1]
 
-            scrape_tasks(session)
-        except Exception as e:
-            print(f"something went wrong: {e}")
-        finally:
-            driver.quit()
-    elif args[1] == 'pussy':
-        if not os.path.exists(config['puppy_path']):
-            print(f"No task config found.")
-            return
-        try:
-            client = genai.Client()
-            lick_it(client)
-        except Exception as e:
-            print(f"something went wrong: {e}")
-    elif args[1] == 'omnomnom':
-        if not os.path.exists(config['puppy_path']) or not os.path.exists(config['pussy_path']):
-            print(f"No task and/or solutions config files found.")
-            return
-        try:
-            driver = setup_webdriver()
-            login(driver)
-            cookies = save_cookies(driver)
+    if cmd == 'sync':
+        driver = get_automation_driver()
+        authorize_session(driver)
+        ctx = extract_session_context(driver)
+        driver.quit()
 
-            session = requests.Session()
-            session.cookies.update(cookies)
+        s = requests.Session()
+        s.cookies.update(ctx)
+        sync_task_repository(s)
 
-            crack_all_nuts(session)
-        except Exception as e:
-            print(f"something went wrong: {e}")
-        finally:
-            driver.quit()
-    elif args[1] == 'easter-egg':
-        print(f"You found it! 🥚")
-    else:
-        print(f"No argument found: {args[1]}")
+    elif cmd == 'gen':
+        batch_process_solutions()
 
+    elif cmd == 'deploy':
+        driver = get_automation_driver()
+        authorize_session(driver)
+        ctx = extract_session_context(driver)
+        driver.quit()
+
+        s = requests.Session()
+        s.cookies.update(ctx)
+        simulate_human_workflow(s)
 
 if __name__ == "__main__":
     main()
