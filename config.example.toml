@@ -7,7 +7,7 @@
 # Your codingbat account email and password
 account_email = ""
 account_password = ""
-# Your Gemini API key here (you get in from Google AI Studio)
+# Your LLM API key here
 api_key = ""
 
 [system]
@@ -24,8 +24,15 @@ metadata_store = "repo_metadata.json"
 solution_buffer = "ai_payloads.json"
 
 [ai_logic]
-# Used gemini model. The default one is recommended
-model_id = "gemini-2.0-flash-lite"
+# Supported options: [groq|gemini]
+llm = "groq"
+# Used model id. The default one is recommended
+# model_id = "gemini-2.0-flash-lite"
+model_id = "llama-3.3-70b-versatile"
+# Number or retries after failed connection
+retries = 3
+# Time to wait in second until the next connection retry
+retry_time = 30
 # Base range for simulated attempts.
 # Total attempts = base_value + (complexity * rank_factor).
 min_attempts = 1

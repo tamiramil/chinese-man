@@ -13,6 +13,7 @@ import tomllib
 import requests
 from bs4 import BeautifulSoup, NavigableString
 from google import genai
+from groq import Groq
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service as ChromeService
@@ -36,13 +37,13 @@ def log(tag, message):
 
 def validate_config(cfg):
     required_structure = {
-        'credentials': ['account_email', 'account_password', 'api_key'],
+        'credentials': ['account_email', 'account_password', 'gemini_api_key', 'groq_api_key'],
         'system': ['headless_mode'],
         'paths': ['metadata_store', 'solution_buffer'],
-        'ai_logic': ['model_id', 'min_attempts', 'max_attempts'],
+        'ai_logic': ['llm', 'model_id', 'min_attempts', 'max_attempts'],
         'delays': ['login_wait', 'base_think_time']
     }
-    
+
     missing = []
     for section, keys in required_structure.items():
         if section not in cfg:
@@ -53,13 +54,13 @@ def validate_config(cfg):
                 missing.append(f"Missing key: {key} in [{section}]")
             elif not cfg[section][key] and not isinstance(cfg[section][key], bool):
                 missing.append(f"Empty value for: {key} in [{section}]")
-                
+
     if missing:
         log(LogColor.ERROR, "Configuration validation failed:")
         for error in missing:
             print(f"  - {error}")
         sys.exit(1)
-    
+
     log(LogColor.SUCCESS, "Configuration validated. Ready for operation.")
 
 with open('config.toml', 'rb') as f:
@@ -69,34 +70,33 @@ validate_config(config)
 
 BASE_URL = 'https://codingbat.com'
 TARGET_LANG_URL = f"{BASE_URL}/java"
-os.environ['GEMINI_API_KEY'] = config['credentials']['api_key']
 
 # === Core Engine Services ===
 
 def get_automation_driver():
     browser_type = config['system'].get('browser', 'firefox').lower()
     is_headless = config['system'].get('headless_mode', True)
-    
+
     log(LogColor.INFO, f"Initializing {browser_type.capitalize()} engine...")
-    
+
     if browser_type == 'chrome':
         options = webdriver.ChromeOptions()
         options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage') 
+        options.add_argument('--disable-dev-shm-usage')
         if is_headless: options.add_argument('--headless')
         return webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
-    
+
     elif browser_type == 'firefox':
         options = webdriver.FirefoxOptions()
         options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage') 
+        options.add_argument('--disable-dev-shm-usage')
         if is_headless: options.add_argument('--headless')
         return webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()), options=options)
 
     elif browser_type == 'safari':
         options = webdriver.SafariOptions()
         return webdriver.Safari(service=SafariService(), options=options)
-    
+
     else:
         log(LogColor.ERROR, f"Unsupported browser: {browser_type}")
         sys.exit(1)
@@ -174,6 +174,47 @@ def _fetch_unit_specs(session, url):
 
 # === AI Orchestration Layer ===
 
+def init_client():
+    llm = config['ai_logic']['llm']
+    api_key = config['credentials']['api_key']
+
+    if llm == 'gemini':
+        os.environ['GEMINI_API_KEY'] = api_key
+        return genai.Client()
+    elif llm == 'groq':
+        return Groq(api_key=api_key)
+    else:
+        log(LogColor.ERROR, f"Unknown LLM: {llm}")
+
+def submit_to_client(client, prompt, retry=1):
+    llm = config['ai_logic']['llm']
+    model_id = config['ai_logic']['model_id']
+
+    try:
+        if llm == 'gemini':
+            response = client.models.generate_content(model=model_id, contents=prompt)
+            return response.text
+        elif llm == 'groq':
+            response = client.chat.completions.create(
+                messages=[ { "role": "user", "content": prompt, } ],
+                model=model_id,
+            )
+            return response.choices[0].message.content
+        else:
+            log(LogColor.ERROR, f"Unknown LLM: {llm}")
+    except Exception as e:
+        retry_time = config['ai_logic']['retry_time']
+
+        if (retry < config['ai_logic']['retries']):
+            log(LogColor.ERROR, f"Unable to connect to the AI client. Attempt {retry}. Retrying in {retry_time} seconds.")
+            log(LogColor.ERROR, e)
+            sleep(retry_time)
+            return submit_to_client(client, prompt, retry=retry+1)
+        else:
+            log(LogColor.ERROR, f"Unable to connect to the AI client after {retry} attempts. Closing session.")
+            log(LogColor.ERROR, e)
+            sys.exit(1)
+
 def synthesize_solutions(client, task_id, specs):
     log(LogColor.AI, f"Requesting synthesis for unit {task_id}...")
 
@@ -219,15 +260,15 @@ def synthesize_solutions(client, task_id, specs):
     )
 
     try:
-        response = client.models.generate_content(model=config['ai_logic']['model_id'], contents=prompt)
-        fragments = [f.strip() for f in response.text.replace('`', '').split('SMD') if f.strip()]
+        response_text = submit_to_client(client, prompt)
+        fragments = [f.strip() for f in response_text.replace('`', '').split('SMD') if f.strip()]
         return int(fragments[0]), fragments[1:]
     except Exception as e:
         log(LogColor.ERROR, f"Synthesis failed: {e}")
         return 1, []
 
 def batch_process_solutions():
-    client = genai.Client()
+    client = init_client()
     with open(config['paths']['metadata_store'], 'r') as f:
         meta = json.load(f)
 
