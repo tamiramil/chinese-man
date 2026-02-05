@@ -37,10 +37,10 @@ def log(tag, message):
 
 def validate_config(cfg):
     required_structure = {
-        'credentials': ['account_email', 'account_password', 'gemini_api_key', 'groq_api_key'],
+        'credentials': ['account_email', 'account_password', 'api_key'],
         'system': ['headless_mode'],
         'paths': ['metadata_store', 'solution_buffer'],
-        'ai_logic': ['llm', 'model_id', 'min_attempts', 'max_attempts'],
+        'ai_logic': ['llm', 'model_id', 'retries', 'retry_time', 'min_attempts', 'max_attempts'],
         'delays': ['login_wait', 'base_think_time']
     }
 
