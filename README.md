@@ -7,9 +7,9 @@ Heyo, I know you need to solve all of these hundreds of boring as fuck problems.
 ## Quick Start
 
 ### 1. Prerequisites
-    - Python 3.11+ (It's kinda weird you didn't get it on your PC).
-    - Browsers: Chrome or Firefox installed (Safari if macOS).
-    - API Key: Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/).
+- Python 3.11+ (It's kinda weird you didn't get it on your PC).
+- Browsers: Chrome or Firefox installed (Safari if macOS).
+- API Key: Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/).
 
 ### 2. Installation
 
@@ -40,11 +40,11 @@ pip install -r requirements.txt
 
 ### 4. Usage
 **Note:** Always make sure your venv is active before running these.
-    1. Sync: `python chinese-man.py sync`
-        Logs in via Selenium, steals cookies, scrapes all tasks. Creates `repo_metadata.json`.
-    2. Generate: `python chinese-man.py gen`
+1. Sync: `python chinese-man.py sync`
+    Logs in via Selenium, steals cookies, scrapes all tasks. Creates `repo_metadata.json`.
+2. Generate: `python chinese-man.py gen`
     Feeds tasks to Gemini. Generates T solutions per task (where T-1 are broken). Creates `ai_payloads.json`.
-    3. Deploy: `python chinese-man.py deploy`
+3. Deploy: `python chinese-man.py deploy`
     The "Human Sim". Logs in and starts submitting solutions with randomized "thinking" delays.
 
 ---
