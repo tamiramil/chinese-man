@@ -34,7 +34,7 @@ pip install -r requirements.txt
 **Note:** Don't push `config.toml` with your credentials to public (obviously).
 
 ### 3. Setup `config.toml`
-**Main Rule:** Do read the fuckin' comments.
+**Note:** Pls read comments.
 1. Copy `config.example.toml` content to `config.toml`.
 2. Open the `config.toml` and fill int and/or change the config values.
 
