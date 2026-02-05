@@ -196,7 +196,7 @@ def submit_to_client(client, prompt, retry=1):
             return response.text
         elif llm == 'groq':
             response = client.chat.completions.create(
-                messages=[ { "role": "user", "content": prompt, } ],
+                messages=[ { "role": "user", "content": prompt } ],
                 model=model_id,
             )
             return response.choices[0].message.content
@@ -208,7 +208,7 @@ def submit_to_client(client, prompt, retry=1):
         if (retry < config['ai_logic']['retries']):
             log(LogColor.ERROR, f"Unable to connect to the AI client. Attempt {retry}. Retrying in {retry_time} seconds.")
             log(LogColor.ERROR, e)
-            sleep(retry_time)
+            time.sleep(retry_time)
             return submit_to_client(client, prompt, retry=retry+1)
         else:
             log(LogColor.ERROR, f"Unable to connect to the AI client after {retry} attempts. Closing session.")
@@ -253,9 +253,9 @@ def synthesize_solutions(client, task_id, specs):
         "}\n\n"
 
         "INPUT DATA:\n"
-        f"Problem:\n{specs.get('description')}\n\n"
-        f"Examples:\n{specs.get('examples')}\n\n"
-        f"Signature:\n{specs.get('signature')}\n\n"
+        f"Problem:\n{specs.get('desc')}\n\n"
+        f"Examples:\n{specs.get('cases')}\n\n"
+        f"Signature:\n{specs.get('decl')}\n\n"
         f"Style:\n{config['ai_logic']['code_style']}"
     )
 
