@@ -14,6 +14,7 @@ import requests
 from bs4 import BeautifulSoup, NavigableString
 from google import genai
 from groq import Groq
+from openai import OpenAI
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service as ChromeService
@@ -183,6 +184,8 @@ def init_client():
         return genai.Client()
     elif llm == 'groq':
         return Groq(api_key=api_key)
+    elif llm == 'openai':
+        return OpenAI(api_key=api_key)
     else:
         log(LogColor.ERROR, f"Unknown LLM: {llm}")
 
@@ -194,10 +197,11 @@ def submit_to_client(client, prompt, retry=1):
         if llm == 'gemini':
             response = client.models.generate_content(model=model_id, contents=prompt)
             return response.text
-        elif llm == 'groq':
+        elif llm == 'groq' or llm == 'openai':
             response = client.chat.completions.create(
                 messages=[ { "role": "user", "content": prompt } ],
                 model=model_id,
+                temperature=0.7
             )
             return response.choices[0].message.content
         else:
@@ -211,9 +215,9 @@ def submit_to_client(client, prompt, retry=1):
             time.sleep(retry_time)
             return submit_to_client(client, prompt, retry=retry+1)
         else:
-            log(LogColor.ERROR, f"Unable to connect to the AI client after {retry} attempts. Closing session.")
+            log(LogColor.ERROR, f"Unable to connect to the AI client after {retry} attempts. Waiting 1 hour.")
             log(LogColor.ERROR, e)
-            sys.exit(1)
+            time.sleep(3600)
 
 def synthesize_solutions(client, task_id, specs):
     log(LogColor.AI, f"Requesting synthesis for unit {task_id}...")
@@ -224,14 +228,14 @@ def synthesize_solutions(client, task_id, specs):
     prompt = (
         "Act as a student learning Java. You must think step-by-step but output only the result.\n\n"
 
-        "PHASE 1: Analyze complexity (1 to 3):\n"
-        "1 - Easy: simple logic, 1-2 lines of code.\n"
-        "2 - Medium: loops, multiple conditions, basic logic.\n"
-        "3 - Hard: nested loops, complex data structures, algorithmic thinking.\n\n"
+        "PHASE 1: Analyze complexity (0 to 3):\n"
+        "0 - Easy: simple logic, 1-2 lines of code.\n"
+        "1 - Medium: loops, multiple conditions, basic logic.\n"
+        "2 - Hard: nested loops, complex data structures, algorithmic thinking.\n\n"
 
         "PHASE 2: Generation Logic:\n"
         f"Calculate the total number of solutions (T) using this rule: T = {base_tries} + (complexity_number * {rank_factor}).\n"
-        "Generate exactly T solutions. The first T-1 solutions MUST be incorrect (syntax or logical errors). The last (T-th) solution MUST be correct.\n"
+        "Generate exactly T solutions. The first T-1 solutions MUST be incorrect (syntax or logical errors). THE LAST (T-th) SOLUTION MUST BE CORRECT.\n"
         "Show incremental progress: each version should be a slight improvement or a fix of a previous error, but still flawed until the final one.\n\n"
 
         "IMPORTANT RULES (STRICT COMPLIANCE):\n"
