@@ -9,9 +9,9 @@ UPD: It makes it instantly. But still, read the configs
 ## Quick Start
 
 ### 1. Prerequisites
-- Python 3.11+ (It's kinda weird you didn't get it on your PC).
+- Python 3.11+ (It's kinda weird if you didn't get it on your PC).
 - Browsers: Chrome or Firefox installed (Safari if macOS).
-- API Key: Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/).
+- API Key: Get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/) (OpenAI and Groq should also be supported)
 
 ### 2. Installation
 
@@ -38,7 +38,7 @@ pip install -r requirements.txt
 ### 3. Setup `config.toml`
 **Note:** Pls read comments.
 1. Copy `config.example.toml` content to `config.toml`.
-2. Open the `config.toml` and fill int and/or change the config values.
+2. Open the `config.toml` and fill it and/or change the config values.
 
 ### 4. Usage
 **Note:** Always make sure your venv is active before running these.
