@@ -2,6 +2,8 @@
 
 Heyo, I know you need to solve all of these hundreds of boring as fuck problems. But here is your magic pill. This script automates CodingBat problems solving and mimics human behaviour (for CodingBat graphs). Yeah, the script doesn't make it instantly, it's a "process" instead, but who cares, when you can still spend this time on what matters. You can modify it if you want it to work instantly (or ask the author to do it for some reward).
 
+UPD: It makes it instantly. But still, read the configs
+
 ---
 
 ## Quick Start
