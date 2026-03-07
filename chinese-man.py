@@ -41,7 +41,7 @@ def validate_config(cfg):
         'credentials': ['account_email', 'account_password', 'api_key'],
         'system': ['headless_mode'],
         'paths': ['metadata_store', 'solution_buffer'],
-        'ai_logic': ['llm', 'model_id', 'retries', 'retry_time', 'min_attempts', 'max_attempts'],
+        'ai_logic': ['llm', 'model_id', 'retries', 'retry_time', 'min_attempts', 'max_attempts', 'human_simulation'],
         'delays': ['login_wait', 'base_think_time']
     }
 
@@ -222,8 +222,19 @@ def submit_to_client(client, prompt, retry=1):
 def synthesize_solutions(client, task_id, specs):
     log(LogColor.AI, f"Requesting synthesis for unit {task_id}...")
 
+
+    is_human = config['ai_logic'].get('human_simulation', True)
     base_tries = random.randint(config['ai_logic']['min_attempts'], config['ai_logic']['max_attempts'])
     rank_factor = config['ai_logic']['rank_factor']
+
+    if is_human:
+        generation_instruction = (
+            f"Calculate the total number of solutions (T) using this rule: T = {base_tries} + (complexity_number * {rank_factor}).\n"
+            "Generate exactly T solutions. The first T-1 solutions MUST be incorrect (syntax or logical errors). THE LAST (T-th) SOLUTION MUST BE CORRECT.\n"
+            "Show incremental progress: each version should be a slight improvement or a fix of a previous error, but still flawed until the final one."
+        )
+    else:
+        generation_instruction = "Generate EXACTLY ONE solution. This solution MUST BE CORRECT and production-ready."
 
     prompt = (
         "Act as a student learning Java. You must think step-by-step but output only the result.\n\n"
@@ -234,9 +245,7 @@ def synthesize_solutions(client, task_id, specs):
         "2 - Hard: nested loops, complex data structures, algorithmic thinking.\n\n"
 
         "PHASE 2: Generation Logic:\n"
-        f"Calculate the total number of solutions (T) using this rule: T = {base_tries} + (complexity_number * {rank_factor}).\n"
-        "Generate exactly T solutions. The first T-1 solutions MUST be incorrect (syntax or logical errors). THE LAST (T-th) SOLUTION MUST BE CORRECT.\n"
-        "Show incremental progress: each version should be a slight improvement or a fix of a previous error, but still flawed until the final one.\n\n"
+        f"{generation_instruction}\n\n"
 
         "IMPORTANT RULES (STRICT COMPLIANCE):\n"
         "- Start your response directly with the complexity number. NO preamble, NO 'Sure', NO 'Here is the code'.\n"
@@ -310,10 +319,18 @@ def simulate_human_workflow(session):
     with open(config['paths']['solution_buffer'], 'r') as f:
         buffer = json.load(f)
 
+    is_human = config['ai_logic'].get('human_simulation', True)
+
     for tid, payload in buffer.items():
         if meta[tid].get('status_completed'): continue
 
         log(LogColor.INFO, f"Executing deployment pipeline for unit {tid}")
+
+        if not is_human:
+            deploy_solution(session, tid, payload['data'][-1])
+            log(LogColor.SUCCESS, f"Unit {tid} deployed instantly.")
+            continue
+
         for idx, code in enumerate(payload['data']):
             wait = config['delays']['base_think_time'] \
                     * payload['rank'] \
